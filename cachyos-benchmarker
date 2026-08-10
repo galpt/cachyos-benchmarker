@@ -142,7 +142,7 @@ runstress() {
 }
 
 runffm() {
-	cd "$WORKDIR/ffmpeg-$FFMPEGVER" || exit 4
+	cd "$ASSETDIR/ffmpeg-$FFMPEGVER" || exit 4
 	local RESFILE="$WORKDIR/runffm"
 	/usr/bin/time -f %e -o "$RESFILE" make -s -j${CPUCORES} &>/dev/null &
 	local PID=$!
@@ -153,7 +153,7 @@ runffm() {
 runx265() {
 	local RESFILE="$WORKDIR/runx265"
 	/usr/bin/time -f %e -o "$RESFILE" x265 -p slow -b 6 -o /dev/null \
-	  --no-progress --log-level none --input "$WORKDIR/bosphorus_hd.y4m" &
+	  --no-progress --log-level none --input "$ASSETDIR/bosphorus_hd.y4m" &
 	local PID=$!
 	echo -n -e "* ${TNAMES[2]}:\t\t\t"
 	animate 2 && return 0 || return 99
@@ -195,7 +195,7 @@ runprime() {
 }
 
 runnamd() {
-	cd "$WORKDIR/namd/NAMD_3.0b6_Linux-x86_64-multicore" || exit 4
+	cd "$ASSETDIR/namd/NAMD_3.0b6_Linux-x86_64-multicore" || exit 4
 	local RESFILE="$WORKDIR/runnamd"
 	rm -f ../apoa1/FFTW*.txt
 	/usr/bin/time -f%e -o "$RESFILE" ./namd3 +p${CPUCORES} +setcpuaffinity \
@@ -207,8 +207,8 @@ runnamd() {
 
 runblend() {
 	local RESFILE="$WORKDIR/runblend"
-	local BLENDER_USER_CONFIG="$WORKDIR"
-	/usr/bin/time -f %e -o "$RESFILE" blender -b "$WORKDIR/bmw_cpu_mod.blend" \
+	export BLENDER_USER_CONFIG="$WORKDIR"
+	/usr/bin/time -f %e -o "$RESFILE" blender -b "$ASSETDIR/bmw_cpu_mod.blend" \
 	  -o "$WORKDIR/blenderbmw.jpg" -f 1 --verbose 0 -t ${CPUCORES} &>/dev/null &
 	local PID=$!
 	echo -n -e "* ${TNAMES[8]}:\t\t\t"
@@ -218,14 +218,14 @@ runblend() {
 runxz() {
 	local RESFILE="$WORKDIR/runxz"
 	/usr/bin/time -f %e -o "$RESFILE" xz -z -k -T${CPUCORES} -Qqq \
-	  -f "$WORKDIR/firefox102.tar" &
+	  -f "$ASSETDIR/firefox102.tar" &
 	local PID=$!
 	echo -n -e "* ${TNAMES[9]}:\t\t\t"
 	animate 9 && return 0 || return 99
 }
 
 runkern() {
-	cd "$WORKDIR/linux-$KERNVER" || exit 4
+	cd "$ASSETDIR/linux-$KERNVER" || exit 4
 	local RESFILE="$WORKDIR/runkern"
 	/usr/bin/time -f %e -o "$RESFILE" make KCFLAGS='-Wno-error' -sj$CPUCORES vmlinux &>/dev/null &
 	local PID=$!
@@ -234,7 +234,7 @@ runkern() {
 }
 
 runyc() {
-	cd "$WORKDIR/y-cruncher v$YCRUNCHER_VER-static" || exit 4
+	cd "$ASSETDIR/y-cruncher v$YCRUNCHER_VER-static" || exit 4
 	rm -f "Pi*.txt"
 	local RESFILE="$WORKDIR/runyc"
 	/usr/bin/time -f%e -o "$RESFILE" ./y-cruncher bench 1b -od:0 \
@@ -402,19 +402,20 @@ exitproc() {
 	echo -e "\n-> Removing temporary files..."
 	rm -f "$WORKDIR"/run* "$WORKDIR"/stressC "$WORKDIR"/schbench_raw \
 	      "$WORKDIR"/*.txt "$WORKDIR"/*.jpg "$WORKDIR"/*.ppm
+	rm -f "$ASSETDIR"/*.part
 	rm -f "$LOCKFILE"
 
 	if [[ "$CLEANUP" == "true" ]]; then
 		echo -e "-> Cleaning up downloaded archives and extracted directories..."
-		rm -f "$WORKDIR"/firefox102.tar.xz "$WORKDIR"/*.zst "$WORKDIR"/*.7z \
-		      "$WORKDIR"/ffmpeg.tar.xz "$WORKDIR"/namd.tar.gz "$WORKDIR"/namd-example.tar.gz \
-		      "$WORKDIR"/linux-$KERNVER.tar.xz "$WORKDIR"/y-cruncher.tar.xz
-		rm -rf "$WORKDIR/ffmpeg-$FFMPEGVER" \
-		       "$WORKDIR/namd" \
-		       "$WORKDIR/linux-$KERNVER" \
-		       "$WORKDIR/y-cruncher v$YCRUNCHER_VER-static" \
-		       "$WORKDIR/firefox102.tar" \
-		       "$WORKDIR/bosphorus_hd.y4m"
+		rm -f "$ASSETDIR"/firefox102.tar.xz "$ASSETDIR"/*.zst "$ASSETDIR"/*.7z \
+		      "$ASSETDIR"/ffmpeg.tar.xz "$ASSETDIR"/namd.tar.gz "$ASSETDIR"/namd-example.tar.gz \
+		      "$ASSETDIR"/linux-$KERNVER.tar.xz "$ASSETDIR"/y-cruncher.tar.xz
+		rm -rf "$ASSETDIR/ffmpeg-$FFMPEGVER" \
+		       "$ASSETDIR/namd" \
+		       "$ASSETDIR/linux-$KERNVER" \
+		       "$ASSETDIR/y-cruncher v$YCRUNCHER_VER-static" \
+		       "$ASSETDIR/firefox102.tar" \
+		       "$ASSETDIR/bosphorus_hd.y4m"
 	fi
 	echo -e "${TB}Bye!${TN}\n"
 }
@@ -534,10 +535,16 @@ if [[ ! -d "$WORKDIR" ]] ; then
 	read -p "The specified directory ${TB}$WORKDIR${TN} does not exist. Create it (y/N)? " DCHOICE
 	[[ $DCHOICE = "y" || $DCHOICE = "Y" ]] && mkdir -p "$WORKDIR" || exit 4
 fi
+# The workdir is the results area: the run log, charts, exports, and per-run
+# temporary files live at its root. Downloaded archives and extracted trees
+# live in a sibling assets/ directory shared by sibling workdirs.
+ASSETDIR="$(dirname "$WORKDIR")/assets"
+SCRIPT_ASSETS="$SCRIPTDIR/assets"
 
 # check files function
 checkfiles() {
 	echo -e "\n${TB}Checking, downloading and preparing test files...${TN}"
+	mkdir -p "$ASSETDIR"
 
 	# stress-ng jobfile
 	cat > "$WORKDIR/stressC" <<- EOF
@@ -597,80 +604,80 @@ checkfiles() {
 
 	sed -i "s/CPUCORES/$CPUCORES/g" "$WORKDIR/stressC"
 
-	if [[ ! -f "$WORKDIR/bosphorus_hd.y4m" ]] ; then
-		ensure_archive "$WORKDIR/bosphorus_hd.7z" "video" \
+	if [[ ! -f "$ASSETDIR/bosphorus_hd.y4m" ]] ; then
+		ensure_archive "$ASSETDIR/bosphorus_hd.7z" "video" \
 		  "http://ultravideo.cs.tut.fi/video/Bosphorus_1920x1080_120fps_420_8bit_YUV_Y4M.7z" \
 		  "$VIDEO_SHA" 7z t
 		echo "--> Unzipping video..."
-		cd "$WORKDIR" || exit 4
+		cd "$ASSETDIR" || exit 4
 		7z e bosphorus_hd.7z -o./ &>/dev/null || { echo "ERROR: 7z e bosphorus_hd.7z -o./ failed"; exit 4; }
 		mv Bosphorus_1920x1080_120fps_420_8bit_YUV.y4m bosphorus_hd.y4m || \
 		  { echo "ERROR: mv Bosphorus_1920x1080_120fps_420_8bit_YUV.y4m bosphorus_hd.y4m failed"; exit 4; }
 	fi
 
-	if [[ ! -d "$WORKDIR/ffmpeg-$FFMPEGVER" ]]; then
-		ensure_archive "$WORKDIR/ffmpeg.tar.xz" "ffmpeg" \
+	if [[ ! -d "$ASSETDIR/ffmpeg-$FFMPEGVER" ]]; then
+		ensure_archive "$ASSETDIR/ffmpeg.tar.xz" "ffmpeg" \
 		  "https://ffmpeg.org/releases/ffmpeg-$FFMPEGVER.tar.xz" \
 		  "$FFMPEG_SHA" tar -tf
 		echo "--> Preparing ffmpeg..."
-		cd "$WORKDIR" || exit 4
+		cd "$ASSETDIR" || exit 4
 		tar -xf ffmpeg.tar.xz || { echo "ERROR: tar -xf ffmpeg.tar.xz failed"; exit 4; }
 	fi
 
-	if [[ ! -d "$WORKDIR/namd" ]]; then
-		ensure_archive "$WORKDIR/namd.tar.gz" "NAMD" \
+	if [[ ! -d "$ASSETDIR/namd" ]]; then
+		ensure_archive "$ASSETDIR/namd.tar.gz" "NAMD" \
 		  "$NAMD_URL" "$NAMD_SHA" tar -tf
-		ensure_archive "$WORKDIR/namd-example.tar.gz" "NAMD example" \
+		ensure_archive "$ASSETDIR/namd-example.tar.gz" "NAMD example" \
 		  "$NAMDEX_URL" "$NAMDEX_SHA" tar -tf
 		echo "--> Preparing NAMD..."
-		cd "$WORKDIR" || exit 4
-		mkdir namd
+		cd "$ASSETDIR" || exit 4
+		mkdir -p namd
 		tar -C namd -xf namd.tar.gz || { echo "ERROR: tar -C namd -xf namd.tar.gz failed"; exit 4; }
 		tar -C namd -xf namd-example.tar.gz || { echo "ERROR: tar -C namd -xf namd-example.tar.gz failed"; exit 4; }
 		sed -i 's/\/usr//;s/500/400/' namd/apoa1/apoa1.namd || \
 		  { echo "ERROR: sed -i namd/apoa1/apoa1.namd failed"; exit 4; }
 	fi
 
-	if [[ ! -f "$WORKDIR/bmw_cpu_mod.blend" ]]; then
+	if [[ ! -f "$ASSETDIR/bmw_cpu_mod.blend" ]]; then
 		echo "--> Downloading Blender BMW model..."
-		wget -c --show-progress -qO "$WORKDIR/bmw_cpu_mod.blend" \
+		wget -c --show-progress -qO "$ASSETDIR/bmw_cpu_mod.blend" \
 		  https://gitlab.com/torvic9/mini-benchmarker/-/raw/master/bmw_cpu_mod.blend
 	fi
 
-	if [[ ! -f "$WORKDIR/firefox102.tar" ]]; then
-		ensure_archive "$WORKDIR/firefox102.tar.xz" "Firefox" \
+	if [[ ! -f "$ASSETDIR/firefox102.tar" ]]; then
+		ensure_archive "$ASSETDIR/firefox102.tar.xz" "Firefox" \
 		  "http://ftp.mozilla.org/pub/firefox/releases/102.9.0esr/source/firefox-102.9.0esr.source.tar.xz" \
 		  "$FIREFOX_SHA" xz -t
 		echo "--> Unzipping Firefox tarball..."
-		xz -d -k -q -f "$WORKDIR/firefox102.tar.xz" || \
-		  { echo "ERROR: xz -d -k -q -f $WORKDIR/firefox102.tar.xz failed"; exit 4; }
+		xz -d -k -q -f "$ASSETDIR/firefox102.tar.xz" || \
+		  { echo "ERROR: xz -d -k -q -f $ASSETDIR/firefox102.tar.xz failed"; exit 4; }
 	fi
 
-	if [[ ! -d "$WORKDIR/linux-$KERNVER" ]]; then
-		ensure_archive "$WORKDIR/linux-$KERNVER.tar.xz" "Linux kernel" \
+	if [[ ! -d "$ASSETDIR/linux-$KERNVER" ]]; then
+		ensure_archive "$ASSETDIR/linux-$KERNVER.tar.xz" "Linux kernel" \
 		  "https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-$KERNVER.tar.xz" \
 		  "$KERNEL_SHA" tar -tf
 		echo "--> Uncompressing kernel source..."
-		cd "$WORKDIR" || exit 4
+		cd "$ASSETDIR" || exit 4
 		tar -xf linux-$KERNVER.tar.xz || { echo "ERROR: tar -xf linux-$KERNVER.tar.xz failed"; exit 4; }
 	fi
 
-	if [[ ! -d "$WORKDIR/y-cruncher v$YCRUNCHER_VER-static" ]]; then
-		ensure_archive "$WORKDIR/y-cruncher.tar.xz" "y-cruncher" \
+	if [[ ! -d "$ASSETDIR/y-cruncher v$YCRUNCHER_VER-static" ]]; then
+		ensure_archive "$ASSETDIR/y-cruncher.tar.xz" "y-cruncher" \
 		  "https://github.com/Mysticial/y-cruncher/releases/download/v$YCRUNCHER_VER/y-cruncher.v$YCRUNCHER_VER-static.tar.xz" \
 		  "$YC_SHA" tar -tf
 		echo "--> Uncompressing y-cruncher..."
-		cd "$WORKDIR" || exit 4
+		cd "$ASSETDIR" || exit 4
 		tar -xf y-cruncher.tar.xz || { echo "ERROR: tar -xf y-cruncher.tar.xz failed"; exit 4; }
 	fi
 
 	echo -e "\n${TB}Preparing kernel source...${TN}"
-	cd "$WORKDIR/linux-$KERNVER" || exit 4
+	cd "$ASSETDIR/linux-$KERNVER" || exit 4
 	make -s distclean && make -s defconfig || \
 	  { echo "ERROR: make -s distclean && make -s defconfig failed"; exit 4; }
 
 	echo -e "\n${TB}Preparing ffmpeg source...${TN}"
-	cd "$WORKDIR/ffmpeg-$FFMPEGVER" || exit 4
+	cd "$ASSETDIR/ffmpeg-$FFMPEGVER" || exit 4
 	# ffbuild/config.mak only exists after configure has run, so on a fresh
 	# tree make distclean fails before the first configure; a failing clean
 	# is only a real error once the tree holds generated files.
@@ -813,7 +820,7 @@ echo -e "\nSCX Scheduler: ${SCX}" >> "$LOGFILE"
 echo -e "\nSCX Version: ${SCX_VERSION}" >> "$LOGFILE"
 echo -e "\n ${VERSION}" >> "$LOGFILE"
 
-cd "$WORKDIR"
+cd "$WORKDIR" || exit 4
 if [[ -f "$SCRIPTDIR/benchmark_scraper.py" ]]; then
 	python "$SCRIPTDIR/benchmark_scraper.py"
 else
