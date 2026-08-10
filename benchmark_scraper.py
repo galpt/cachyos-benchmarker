@@ -76,6 +76,9 @@ def parse_log_files():
                 "scx_version": scx_version,
             }
 
+            # A run aborted before its metadata was written (for example a
+            # scheduler crash) has no System: line and is dropped here with a
+            # visible warning; nothing can be aggregated from it.
             system_info_match = re.search(r'System:(.*?)$', data_text, re.DOTALL)
             if system_info_match:
                 system_info = system_info_match.group(1).strip()
@@ -83,15 +86,27 @@ def parse_log_files():
                 print(f"Warning: Could not extract system information from file: {file}")
                 continue
 
-            # Build regex alternation from all test names
+            # Build regex alternation from all test names. The value is
+            # anchored so that only a numeric result standing alone on its
+            # line is captured; the Total time/score lines are not test
+            # metrics and are deliberately not in the alternation.
             escaped_names = [re.escape(n) for n in ALL_TEST_NAMES]
-            pattern = r'(' + '|'.join(escaped_names) + r'|Total time \(s\)|Total score): (\d+\.?\d*)'
-            for match in re.finditer(pattern, data_text):
+            pattern = r'(' + '|'.join(escaped_names) + r'): (\d+\.?\d*)$'
+            for match in re.finditer(pattern, data_text, re.MULTILINE):
                 test_name = match.group(1)
                 test_time = float(match.group(2))
                 test_data[(kernel_label, test_name)].append(test_time)
                 kernel_versions[kernel_label].setdefault(test_name, []).append(test_time)
                 kernel_info[kernel_label] = system_info
+
+            # Failed benchmarks are recorded by name so the reports can show
+            # them; they carry no numeric result and must not enter the
+            # aggregation. The reason in parentheses is not interpreted, so
+            # any wording the script writes (exit code, scheduler crash) is
+            # accepted.
+            failed_pattern = r'(' + '|'.join(escaped_names) + r'): FAILED(?: \([^)]*\))?$'
+            for match in re.finditer(failed_pattern, data_text, re.MULTILINE):
+                kernel_metadata[kernel_label].setdefault("failed_tests", []).append(match.group(1))
 
             # Detect intentionally skipped y-cruncher (placeholder value + infinity kernel)
             yc_key = "y-cruncher pi 1b"
@@ -274,12 +289,15 @@ def export_data(average_times, kernel_versions, csv_filename, json_filename, ker
     for i, kernel_version in enumerate(kernel_versions):
         kernel, scx, scx_ver = split_kernel_string(kernel_version)
         kv_skipped_yc = kernel_metadata.get(kernel_version, {}).get("yc_skipped", False) if kernel_metadata else False
+        kv_failed = kernel_metadata.get(kernel_version, {}).get("failed_tests", []) if kernel_metadata else []
         metrics = {}
         for k, v in average_times[i].items():
             if k == "y-cruncher pi 1b" and kv_skipped_yc:
                 metrics[k] = "skipped"
             else:
                 metrics[k] = float(v)
+        for name in kv_failed:
+            metrics[name] = "failed"
         entry = {
             "kernel": kernel,
             "scx_scheduler": scx,
@@ -296,6 +314,12 @@ def export_data(average_times, kernel_versions, csv_filename, json_filename, ker
         return
 
     test_names = list(average_times[0].keys())
+    # A benchmark that failed on every kernel has no averaged value; its column
+    # still appears so the failure is visible in the export.
+    for i, kernel_version in enumerate(kernel_versions):
+        for name in kernel_metadata.get(kernel_version, {}).get("failed_tests", []):
+            if name not in test_names:
+                test_names.append(name)
 
     with open(csv_filename, 'w', newline='') as f:
         writer = csv.writer(f)
@@ -305,8 +329,12 @@ def export_data(average_times, kernel_versions, csv_filename, json_filename, ker
         for i, kernel_version in enumerate(kernel_versions):
             kernel, scx, scx_ver = split_kernel_string(kernel_version)
             kv_skipped_yc = kernel_metadata.get(kernel_version, {}).get("yc_skipped", False) if kernel_metadata else False
+            kv_failed = kernel_metadata.get(kernel_version, {}).get("failed_tests", []) if kernel_metadata else []
             row = [kernel, scx, scx_ver]
             for test_name in test_names:
+                if test_name in kv_failed:
+                    row.append("failed")
+                    continue
                 val = average_times[i].get(test_name, '')
                 if test_name == "y-cruncher pi 1b" and kv_skipped_yc:
                     row.append("skipped")
@@ -416,6 +444,16 @@ if test_data:
                             "trades synthetic throughput for real-world responsiveness.</em>")
             break
 
+    # List kernels with failed benchmarks so the omission is visible in the report
+    failed_note = ""
+    failed_kernels = []
+    for kv in kernel_versions_list:
+        failed = kernel_metadata.get(kv, {}).get("failed_tests", [])
+        if failed:
+            failed_kernels.append(f"{kv}: {', '.join(failed)}")
+    if failed_kernels:
+        failed_note = "\n    <p><strong>Failed benchmarks:</strong> " + "; ".join(failed_kernels) + "</p>"
+
     # Generate HTML page
     html_content = f"""<!DOCTYPE html>
 <html lang="en">
@@ -429,7 +467,7 @@ if test_data:
 
     <h2>Categorized Results</h2>
     <p>Category 1: Throughput & Compilation (lower is better).
-       Category 2: Scheduler Latency (↓ lower is better, ↑ higher is better).{yc_skip_note}</p>
+       Category 2: Scheduler Latency (↓ lower is better, ↑ higher is better).{yc_skip_note}</p>{failed_note}
     <img src="categorized_comparison_All.png" alt="Categorized Comparison - All Kernels"
          style="max-width: 100%; height: auto;">
 
