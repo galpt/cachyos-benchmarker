@@ -502,12 +502,14 @@ SCX="none"
 SCX_VERSION=""
 # update if we find them below
 
+# Read the ops name into its own variable: TMP is reused later as the
+# configure prefix, so it must keep its /tmp value.
 if [ -f "/sys/kernel/sched_ext/root/ops" ]; then
-	TMP=$(cat "/sys/kernel/sched_ext/root/ops")
-	if [ -n "$TMP" ]; then
+	SCX_OPS=$(cat "/sys/kernel/sched_ext/root/ops")
+	if [ -n "$SCX_OPS" ]; then
 		SCX=$(awk -F'[[:digit:]]' '{print $1}' "/sys/kernel/sched_ext/root/ops" | sed -rn 's/^(.*)_$/\1/p')
 		SCX_VERSION=$(sed -rn 's/^[^0-9]*([0-9]+(\.[0-9]+)+).*$/\1/p' "/sys/kernel/sched_ext/root/ops")
-		[[ -z "$SCX" ]] && SCX="$TMP"
+		[[ -z "$SCX" ]] && SCX="$SCX_OPS"
 	fi
 fi
 
