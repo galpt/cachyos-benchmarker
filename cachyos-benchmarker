@@ -410,12 +410,13 @@ exitproc() {
 		rm -f "$ASSETDIR"/firefox102.tar.xz "$ASSETDIR"/*.zst "$ASSETDIR"/*.7z \
 		      "$ASSETDIR"/ffmpeg.tar.xz "$ASSETDIR"/namd.tar.gz "$ASSETDIR"/namd-example.tar.gz \
 		      "$ASSETDIR"/linux-$KERNVER.tar.xz "$ASSETDIR"/y-cruncher.tar.xz
-		rm -rf "$ASSETDIR/ffmpeg-$FFMPEGVER" \
-		       "$ASSETDIR/namd" \
-		       "$ASSETDIR/linux-$KERNVER" \
-		       "$ASSETDIR/y-cruncher v$YCRUNCHER_VER-static" \
-		       "$ASSETDIR/firefox102.tar" \
-		       "$ASSETDIR/bosphorus_hd.y4m"
+		rm -rf "$ASSETDIR/ffmpeg-$FFMPEGVER" "$ASSETDIR/.ffmpeg-${FFMPEGVER}.done" \
+		       "$ASSETDIR/namd" "$ASSETDIR/.namd-${NAMDVER}.done" \
+		       "$ASSETDIR/linux-$KERNVER" "$ASSETDIR/.linux-${KERNVER}.done" \
+		       "$ASSETDIR/y-cruncher v$YCRUNCHER_VER-static" "$ASSETDIR/.yc-${YCRUNCHER_VER}.done" \
+		       "$ASSETDIR/firefox102.tar" "$ASSETDIR/.firefox.done" \
+		       "$ASSETDIR/bosphorus_hd.y4m" "$ASSETDIR/.video.done" \
+		       "$ASSETDIR/bmw_cpu_mod.blend" "$ASSETDIR/.blend.done"
 	fi
 	echo -e "${TB}Bye!${TN}\n"
 }
@@ -546,6 +547,20 @@ checkfiles() {
 	echo -e "\n${TB}Checking, downloading and preparing test files...${TN}"
 	mkdir -p "$ASSETDIR"
 
+	# Markers are the preparation contract: a marker without its output means
+	# the tree was removed by hand, and failing at run time wastes the whole
+	# run.
+	local PRE_MARKERS=( ".video.done" ".ffmpeg-${FFMPEGVER}.done" ".namd-${NAMDVER}.done" \
+	    ".blend.done" ".firefox.done" ".linux-${KERNVER}.done" ".yc-${YCRUNCHER_VER}.done" )
+	local PRE_OUTPUTS=( "bosphorus_hd.y4m" "ffmpeg-$FFMPEGVER" "namd" "bmw_cpu_mod.blend" \
+	    "firefox102.tar" "linux-$KERNVER" "y-cruncher v$YCRUNCHER_VER-static" )
+	for ((i=0; i<${#PRE_MARKERS[@]}; i++)); do
+		if [[ -f "$ASSETDIR/${PRE_MARKERS[$i]}" && ! -e "$ASSETDIR/${PRE_OUTPUTS[$i]}" ]]; then
+			echo "ERROR: $ASSETDIR/${PRE_MARKERS[$i]} exists but $ASSETDIR/${PRE_OUTPUTS[$i]} is missing; remove the marker or restore the asset"
+			exit 4
+		fi
+	done
+
 	# stress-ng jobfile
 	cat > "$WORKDIR/stressC" <<- EOF
 	run sequential 0
@@ -604,7 +619,13 @@ checkfiles() {
 
 	sed -i "s/CPUCORES/$CPUCORES/g" "$WORKDIR/stressC"
 
-	if [[ ! -f "$ASSETDIR/bosphorus_hd.y4m" ]] ; then
+	# An asset is 'prepared' only when its completion marker exists. The
+	# directory itself is not a reliable signal: mkdir() succeeds before
+	# extraction, and a zero-byte archive passes a -f gate. The marker is
+	# written only after every preparation step returned success, so the gate
+	# stays idempotent across runs and across failures.
+	if [[ ! -f "$ASSETDIR/.video.done" ]]; then
+		rm -f "$ASSETDIR/bosphorus_hd.y4m"
 		ensure_archive "$ASSETDIR/bosphorus_hd.7z" "video" \
 		  "http://ultravideo.cs.tut.fi/video/Bosphorus_1920x1080_120fps_420_8bit_YUV_Y4M.7z" \
 		  "$VIDEO_SHA" 7z t
@@ -613,18 +634,22 @@ checkfiles() {
 		7z e bosphorus_hd.7z -o./ &>/dev/null || { echo "ERROR: 7z e bosphorus_hd.7z -o./ failed"; exit 4; }
 		mv Bosphorus_1920x1080_120fps_420_8bit_YUV.y4m bosphorus_hd.y4m || \
 		  { echo "ERROR: mv Bosphorus_1920x1080_120fps_420_8bit_YUV.y4m bosphorus_hd.y4m failed"; exit 4; }
+		: > "$ASSETDIR/.video.done"
 	fi
 
-	if [[ ! -d "$ASSETDIR/ffmpeg-$FFMPEGVER" ]]; then
+	if [[ ! -f "$ASSETDIR/.ffmpeg-${FFMPEGVER}.done" ]]; then
+		rm -rf "$ASSETDIR/ffmpeg-$FFMPEGVER"
 		ensure_archive "$ASSETDIR/ffmpeg.tar.xz" "ffmpeg" \
 		  "https://ffmpeg.org/releases/ffmpeg-$FFMPEGVER.tar.xz" \
 		  "$FFMPEG_SHA" tar -tf
 		echo "--> Preparing ffmpeg..."
 		cd "$ASSETDIR" || exit 4
 		tar -xf ffmpeg.tar.xz || { echo "ERROR: tar -xf ffmpeg.tar.xz failed"; exit 4; }
+		: > "$ASSETDIR/.ffmpeg-${FFMPEGVER}.done"
 	fi
 
-	if [[ ! -d "$ASSETDIR/namd" ]]; then
+	if [[ ! -f "$ASSETDIR/.namd-${NAMDVER}.done" ]]; then
+		rm -rf "$ASSETDIR/namd"
 		ensure_archive "$ASSETDIR/namd.tar.gz" "NAMD" \
 		  "$NAMD_URL" "$NAMD_SHA" tar -tf
 		ensure_archive "$ASSETDIR/namd-example.tar.gz" "NAMD example" \
@@ -636,39 +661,48 @@ checkfiles() {
 		tar -C namd -xf namd-example.tar.gz || { echo "ERROR: tar -C namd -xf namd-example.tar.gz failed"; exit 4; }
 		sed -i 's/\/usr//;s/500/400/' namd/apoa1/apoa1.namd || \
 		  { echo "ERROR: sed -i namd/apoa1/apoa1.namd failed"; exit 4; }
+		: > "$ASSETDIR/.namd-${NAMDVER}.done"
 	fi
 
-	if [[ ! -f "$ASSETDIR/bmw_cpu_mod.blend" ]]; then
+	if [[ ! -f "$ASSETDIR/.blend.done" ]]; then
+		rm -f "$ASSETDIR/bmw_cpu_mod.blend"
 		echo "--> Downloading Blender BMW model..."
 		wget -c --show-progress -qO "$ASSETDIR/bmw_cpu_mod.blend" \
 		  https://gitlab.com/torvic9/mini-benchmarker/-/raw/master/bmw_cpu_mod.blend
+		: > "$ASSETDIR/.blend.done"
 	fi
 
-	if [[ ! -f "$ASSETDIR/firefox102.tar" ]]; then
+	if [[ ! -f "$ASSETDIR/.firefox.done" ]]; then
+		rm -f "$ASSETDIR/firefox102.tar"
 		ensure_archive "$ASSETDIR/firefox102.tar.xz" "Firefox" \
 		  "http://ftp.mozilla.org/pub/firefox/releases/102.9.0esr/source/firefox-102.9.0esr.source.tar.xz" \
 		  "$FIREFOX_SHA" xz -t
 		echo "--> Unzipping Firefox tarball..."
 		xz -d -k -q -f "$ASSETDIR/firefox102.tar.xz" || \
 		  { echo "ERROR: xz -d -k -q -f $ASSETDIR/firefox102.tar.xz failed"; exit 4; }
+		: > "$ASSETDIR/.firefox.done"
 	fi
 
-	if [[ ! -d "$ASSETDIR/linux-$KERNVER" ]]; then
+	if [[ ! -f "$ASSETDIR/.linux-${KERNVER}.done" ]]; then
+		rm -rf "$ASSETDIR/linux-$KERNVER"
 		ensure_archive "$ASSETDIR/linux-$KERNVER.tar.xz" "Linux kernel" \
 		  "https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-$KERNVER.tar.xz" \
 		  "$KERNEL_SHA" tar -tf
 		echo "--> Uncompressing kernel source..."
 		cd "$ASSETDIR" || exit 4
 		tar -xf linux-$KERNVER.tar.xz || { echo "ERROR: tar -xf linux-$KERNVER.tar.xz failed"; exit 4; }
+		: > "$ASSETDIR/.linux-${KERNVER}.done"
 	fi
 
-	if [[ ! -d "$ASSETDIR/y-cruncher v$YCRUNCHER_VER-static" ]]; then
+	if [[ ! -f "$ASSETDIR/.yc-${YCRUNCHER_VER}.done" ]]; then
+		rm -rf "$ASSETDIR/y-cruncher v$YCRUNCHER_VER-static"
 		ensure_archive "$ASSETDIR/y-cruncher.tar.xz" "y-cruncher" \
 		  "https://github.com/Mysticial/y-cruncher/releases/download/v$YCRUNCHER_VER/y-cruncher.v$YCRUNCHER_VER-static.tar.xz" \
 		  "$YC_SHA" tar -tf
 		echo "--> Uncompressing y-cruncher..."
 		cd "$ASSETDIR" || exit 4
 		tar -xf y-cruncher.tar.xz || { echo "ERROR: tar -xf y-cruncher.tar.xz failed"; exit 4; }
+		: > "$ASSETDIR/.yc-${YCRUNCHER_VER}.done"
 	fi
 
 	echo -e "\n${TB}Preparing kernel source...${TN}"
