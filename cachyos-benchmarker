@@ -61,8 +61,19 @@ animate() {
 		printf "\b${s:$i:1}"
 		sleep 1
 	done
+	# The child's exit status decides the run result: a non-zero status is
+	# recorded as a failed benchmark and propagated to the || exit 8 chain.
+	wait "$PID"
+	local rc=$?
+	if (( rc != 0 )); then
+		printf "\b "
+		echo -e "* ${TNAMES[$1]}:\t\tFAILED"
+		echo -e "${TNAMES[$1]}: FAILED (exit code $rc)" >> "$LOGFILE"
+		return $rc
+	fi
 	printf "\b " ; cat "$RESFILE"
 	echo -e "${TNAMES[$1]}: $(cat "$RESFILE")" >> "$LOGFILE"
+	return 0
 }
 
 # Download to a temporary name and only rename into place once the archive has
@@ -473,7 +484,6 @@ KERNEL_SHA="8112202bc26d086957a94d2109a6dcd4478c5ba18d0f0a5e1c5dfeea01f54972"
 FFMPEG_SHA="bce9eeb0f17ef8982390b1f37711a61b4290dc8c2a0c1a37b5857e85bfb0e4ff"
 YC_SHA="479eee4cfe390971a2dfe75c1f47b2c51d9ec2364a371232187ca1ea687b1549"
 VIDEO_SHA="e2f60b904789a60f6d1edc194d8540d401dd882e3ee3605b9b1de8feacc72133"
-KERNEL_NAME=$(uname -r)
 CDATE=$(date +%F-%H%M)
 RAMSIZE=$(awk '/MemTotal/{print int($2 / 1000)}' /proc/meminfo)
 CPUCORES=$(nproc)
@@ -778,6 +788,15 @@ checksys() {
 	[[ -z $NCHOICE ]] && NCHOICE="$USER@$HOSTNAME-${LOCKFILE#*benchie.}"
 	# results will be written to this file
 	LOGFILE="$WORKDIR/benchie_${NCHOICE}_${CDATE}.log"
+	# The log is created with O_EXCL semantics: a pre-existing symlink would
+	# redirect the append writes outside the results tree, and the exclusive
+	# create prevents a file planted between the check and the first write
+	# from entering scoring.
+	[[ -L "$LOGFILE" ]] && { echo "ERROR: $LOGFILE is a symlink, refusing to write through it"; exit 4; }
+	rm -f "$LOGFILE"
+	set -o noclobber
+	: > "$LOGFILE" || { echo "ERROR: cannot create $LOGFILE"; set +o noclobber; exit 4; }
+	set +o noclobber
 
 	# traps (ctrl-c)
 	trap killproc INT
@@ -799,52 +818,104 @@ header() {
 	echo -e "==================================================\n"
 }
 
+# Run a benchmark and map its failure to the contract codes: a
+# prepare-class failure (4) propagates unchanged; anything else is a
+# benchmark failure (8). The sleep preserves the pre-existing pacing.
+run_or_exit() {
+	"$@"
+	local rc=$?
+	sleep 2
+	if (( rc == 4 )); then
+		exit 4
+	fi
+	if (( rc != 0 )); then
+		exit 8
+	fi
+}
+
 # run
 NRTESTS=14
 declare -a WEIGHTS=(0.9 0.9 0.85 0.85 0.85 0.85 0.8 0.95 0.95 1 0.95 1 0.85 0.9)
-checkfiles && checksys && header || exit 8
-runstress && sleep 2 || exit 8
-if [[ "$KERNEL_NAME" == *"infinity"* ]]; then
-	echo -e "* ${TNAMES[11]}:\t\tSKIPPED (Infinity scheduler: takes >1m)"
-	echo -e "${TNAMES[11]}: 0.01" >> "$LOGFILE"
-else
-	runyc && sleep 2 || exit 8
-fi
-runperf_sch && sleep 2 || exit 8
-runperf_mem && sleep 2 || exit 8
-runnamd && sleep 2 || exit 8
-runprime && sleep 2 || exit 8
-runargon && sleep 2 || exit 8
-runffm && sleep 2 || exit 8
-runxz && sleep 2 || exit 8
-runkern && sleep 2 || exit 8
-runblend && sleep 2 || exit 8
-runx265 && sleep 2 || exit 8
-runschbench && sleep 2 || exit 8
+checkfiles || exit $?
+# A checksys abort is a prepare-class failure (exit 4, e.g. the run log could
+# not be created) and must not be flattened to the benchmark code; header only
+# echoes, so a failure there is mapped to 8.
+checksys || exit $?
+header || exit 8
+run_or_exit runstress
+run_or_exit runyc
+run_or_exit runperf_sch
+run_or_exit runperf_mem
+run_or_exit runnamd
+run_or_exit runprime
+run_or_exit runargon
+run_or_exit runffm
+run_or_exit runxz
+run_or_exit runkern
+run_or_exit runblend
+run_or_exit runx265
+run_or_exit runschbench
 runrps
 sleep 1
-runcyclictest && sleep 2 || exit 8
+run_or_exit runcyclictest
 
 # time and score calculations, print and log final results
-unset ARRAYTIME ; unset ARRAY
-ARRAYTIME=($(awk -F': ' '{print $2}' "$LOGFILE"))
-
-# Guard: replace any empty or zero ARRAYTIME entries with 0.01
-# to keep the geometric mean well-defined
+# Only numeric results may enter the scoring arithmetic. A result line that
+# does not parse as a float is a failed run, not a number; interpolating it
+# unquoted would corrupt the geometric mean and be evaluated by the shell.
+# Failed runs are counted, excluded, and recorded in the log so the omission
+# is visible to the reader.
+FAILED_TESTS=0
+FAILED_NAMES=()
+declare -a VALID_W=()
+declare -a VALID_V=()
 for ((i=0; i<${NRTESTS}; i++)) ; do
-	if [[ -z "${ARRAYTIME[$i]}" || "${ARRAYTIME[$i]}" == "0" || "${ARRAYTIME[$i]}" == "0.0" || "${ARRAYTIME[$i]}" == "0.00" ]]; then
-		ARRAYTIME[$i]=0.01
+	# The test is matched by its name in TNAMES, not by its position in the
+	# log; the last occurrence of the name wins.
+	v=$(awk -F': ' -v n="${TNAMES[$i]}" '$1==n {v=$2} END{print v}' "$LOGFILE")
+	if [[ $v =~ ^[+-]?[0-9]+(\.[0-9]+)?$ ]]; then
+		VALID_W+=("${WEIGHTS[$i]}")
+		VALID_V+=("$v")
+	else
+		FAILED_TESTS=$((FAILED_TESTS + 1))
+		FAILED_NAMES+=("${TNAMES[$i]}")
 	fi
 done
 
-# using geometric mean for now
-for ((i=0; i<${NRTESTS}; i++)) ; do
-	ARRAY[$i]="$(python -c "print(round(( ${ARRAYTIME[$i]} * $COEFF * ${WEIGHTS[$i]}),4))")"
-done
+if (( FAILED_TESTS > 0 )); then
+	FAILED_MSG="*** ${FAILED_TESTS} of ${NRTESTS} benchmarks have no valid result; excluded from scoring: ${FAILED_NAMES[*]} ***"
+	echo "$FAILED_MSG"
+	echo -e "$FAILED_MSG" >> "$LOGFILE"
+fi
 
-TOTTIME="$(IFS="+" ; python -c "print(round((${ARRAYTIME[*]}),2))")"
-INTSCORE="$(IFS="*" ; python -c "print(round((${ARRAY[*]}),4))")"
-SCORE="$(python -c "print(round(($INTSCORE ** (1 / $NRTESTS)),2))")"
+if (( FAILED_TESTS == NRTESTS )); then
+	echo "ERROR: no benchmark produced a valid result; cannot compute a score"
+	echo -e "ERROR: no benchmark produced a valid result; cannot compute a score" >> "$LOGFILE"
+	exit 10
+fi
+
+# Weights are keyed to the test identity, not to the log position: y-cruncher
+# runs second but is the eleventh entry in TNAMES.
+read TOTTIME SCORE <<< "$(python3 - "$COEFF" "${#VALID_V[@]}" "${VALID_W[@]}" "${VALID_V[@]}" <<'PYEOF'
+import sys
+
+coeff = float(sys.argv[1])
+m = int(sys.argv[2])
+weights = [float(x) for x in sys.argv[3:3 + m]]
+values = [float(x) for x in sys.argv[3 + m:3 + 2 * m]]
+
+# The geometric mean collapses on a zero factor, so a measured zero is
+# floored for the score terms; the raw value still counts into the total.
+total = round(sum(values), 2)
+product = 1.0
+for value, weight in zip(values, weights):
+	if value == 0.0:
+		value = 0.01
+	product *= value * coeff * weight
+score = round(product ** (1.0 / m), 2)
+print(total, score)
+PYEOF
+)"
 
 echo "--------------------------------------------------"
 echo "Total time in seconds:"
@@ -878,7 +949,10 @@ if command -v geekbench &>/dev/null; then
 	echo "=================================================="
 fi
 
-echo -e "schbench avg rps: $(cat "$WORKDIR/runrps" 2>/dev/null || echo "0")" >> "$LOGFILE"
+# Absent metrics are omitted, not zeroed: publishing 0 would read as a real measurement.
+if [[ -s "$WORKDIR/runrps" ]]; then
+	echo -e "schbench avg rps: $(cat "$WORKDIR/runrps")" >> "$LOGFILE"
+fi
 echo -e "\nName: ${NCHOICE}" >> "$LOGFILE"
 echo -e "Date: ${CDATE}" >> "$LOGFILE"
 echo -e "\n$SYSINFO" >> "$LOGFILE"
@@ -892,5 +966,3 @@ if [[ -f "$SCRIPTDIR/benchmark_scraper.py" ]]; then
 else
 	python /usr/bin/benchmark_scraper.py
 fi
-
-exit 0
