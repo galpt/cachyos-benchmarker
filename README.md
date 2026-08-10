@@ -29,16 +29,18 @@ sudo ./cachyos-benchmarker /path/to/workdir
 # The script will:
 #   1. Prompt you to drop the page cache
 #   2. Ask for a run label (or press Enter for auto-generated name)
-#   3. Download all required assets into the working directory
+#   3. Prepare required assets in the assets/ directory next to <workdir> (NAMD and the Blender model ship with the repo; the rest are downloaded once and shared by sibling workdirs)
 #   4. Run all 14 benchmarks (this takes 15–25 minutes)
-#   5. Generate a .log file, charts, CSV, JSON, and HTML report
+#   5. Write a .log to <workdir> and generate charts, CSV, JSON, and an HTML report
 
 # After completion, the working directory contains:
 #   benchie_<label>_<date>.log        — raw benchmark results
 #   categorized_comparison_All.png    — stacked chart (Category 1 + 2)
 #   kernel_version_comparison_All.png — cross-kernel grouped chart
-#   test_performance.html             — interactive HTML report
+#   test_performance.html             — HTML report
 #   test_results_*.csv / .json        — machine-readable exports
+# Downloaded assets are cached in the sibling assets/ directory and shared by
+# sibling workdirs; --cleanup removes them.
 
 # Example: compare two different kernels by running in separate directories
 sudo ./cachyos-benchmarker /tmp/bench-kernel-A
@@ -51,7 +53,7 @@ cd /tmp/bench-comparison && cp /tmp/bench-kernel-A/benchie_*.log . && cp /tmp/be
 
 ## How It Works
 
-*   **cachyos-benchmarker**: The core script. It prepares the environment, downloads necessary assets, and runs a suite of 14 synthetic and real-world benchmarks (such as `stress-ng`, Blender CPU render, FFmpeg/Kernel compilation, x265 encoding, schbench, and cyclictest). Results, along with detailed system and `sched-ext` information, are logged to a `.log` file.
+*   **cachyos-benchmarker**: The core script. It prepares the environment, prepares necessary assets, and runs a suite of 14 synthetic and real-world benchmarks (such as `stress-ng`, Blender CPU render, FFmpeg/Kernel compilation, x265 encoding, schbench, and cyclictest). Results, along with detailed system and `sched-ext` information, are logged to a `.log` file.
 *   **benchmark_scraper.py**: A visualization and data extraction tool. It parses the generated `.log` files to aggregate performance metrics, compare different kernel or scheduler configurations, and generate a categorized composite chart with two sections (Throughput & Compilation / Scheduler Latency), alongside a cross-kernel comparison chart and an HTML report. It also automatically exports the aggregated raw data to time-stamped `.csv` and `.json` files for further analysis.
 *   **kernel-autofdo.sh**: A helper script for hardware profiling. It automatically configures kernel branch sampling and runs the benchmarker alongside additional workloads (like `sysbench` and base-kernel compilation) to generate a footprint for AutoFDO.
 
