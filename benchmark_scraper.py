@@ -9,8 +9,9 @@ import matplotlib.colors as mcolors
 from collections import defaultdict
 
 # ── Constants ──
-# When y-cruncher is intentionally skipped on infinity kernels,
-# the bash script writes this placeholder value to preserve log alignment.
+# This placeholder was written by script versions that skipped y-cruncher on
+# infinity kernels; current versions run y-cruncher unconditionally, so the
+# value appears only in historical logs.
 Y_CRUNCHER_SKIP_VALUE = 0.01
 
 # ── Category definitions ──
@@ -121,6 +122,12 @@ def parse_log_files():
                 kernel_metadata[kernel_label].setdefault("failed_tests", []).append(match.group(1))
 
             # Detect intentionally skipped y-cruncher (placeholder value + infinity kernel)
+            # This check annotates logs written by script versions that skipped
+            # y-cruncher on infinity kernels, where the run recorded the 0.01
+            # placeholder. Current versions always execute y-cruncher, whose real
+            # values (~42 s) cannot meet the threshold, so the annotation cannot
+            # attach to a fresh run; it remains because historical logs must
+            # still render their skipped bar.
             yc_key = "y-cruncher pi 1b"
             yc_values = kernel_versions.get(kernel_label, {}).get(yc_key, [])
             if yc_values and all(v <= Y_CRUNCHER_SKIP_VALUE for v in yc_values):
@@ -275,13 +282,17 @@ def plot_categorized_comparison(average_times, mode, kernel_versions, kernel_met
     fig.suptitle(f'CachyOS Benchmarker — Categorized Results ({mode} mode)',
                  fontsize=14, fontweight='bold', y=0.98)
     if has_skipped_yc:
-        fig.text(0.5, 0.005,
+        fig.text(0.5, 0.008,
                  '* y-cruncher pi 1b skipped on Infinity Scheduler — v3 design trades '
                  'synthetic throughput for real-world responsiveness.',
                  ha='center', va='bottom', fontsize=8, fontstyle='italic', color='#666666')
+    # The bottom margin must clear the latency chart's x tick labels from the
+    # skip note: the note is drawn in figure coordinates below the axes edge,
+    # and the tick labels extend below it. bbox_inches='tight' trims the
+    # whitespace, so pad_inches provides the bottom padding of the saved image.
     plt.subplots_adjust(hspace=0.6, top=0.88,
-                        bottom=0.04 if has_skipped_yc else 0.02)
-    plt.savefig(f'categorized_comparison_{mode}.png', dpi=160, bbox_inches='tight')
+                        bottom=0.08 if has_skipped_yc else 0.05)
+    plt.savefig(f'categorized_comparison_{mode}.png', dpi=160, bbox_inches='tight', pad_inches=0.2)
     plt.close()
 
 # Function to export aggregated data to CSV and JSON
@@ -413,15 +424,15 @@ def plot_kernel_version_comparison(average_times, mode, kernel_versions, kernel_
     ax.grid(axis='x')
 
     if has_skipped:
-        fig.text(0.5, 0.005,
+        fig.text(0.5, 0.008,
                  '* y-cruncher pi 1b skipped on Infinity Scheduler — '
                  'v3 design trades synthetic throughput for real-world responsiveness.',
                  ha='center', va='bottom', fontsize=8, fontstyle='italic', color='#666666')
 
     plt.tight_layout()
-    bottom_adj = 0.04 if has_skipped else 0.02
+    bottom_adj = 0.08 if has_skipped else 0.05
     plt.subplots_adjust(bottom=bottom_adj)
-    plt.savefig(f'kernel_version_comparison_{mode}.png')
+    plt.savefig(f'kernel_version_comparison_{mode}.png', bbox_inches='tight', pad_inches=0.2)
     plt.close()
 
 # ── Main ──
