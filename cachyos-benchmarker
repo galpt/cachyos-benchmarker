@@ -208,7 +208,22 @@ runnamd() {
 runblend() {
 	local RESFILE="$WORKDIR/runblend"
 	export BLENDER_USER_CONFIG="$WORKDIR"
-	/usr/bin/time -f %e -o "$RESFILE" blender -b "$ASSETDIR/bmw_cpu_mod.blend" \
+	local BLEND_SRC
+	if [[ -f "$SCRIPT_ASSETS/bmw_cpu_mod.blend" ]]; then
+		BLEND_SRC="$SCRIPT_ASSETS/bmw_cpu_mod.blend"
+		echo "$BLENDER_SHA  $BLEND_SRC" | sha256sum -c - || \
+		  { echo "ERROR: Vendored Blender model failed its SHA-256 checksum"; exit 4; }
+	else
+		if [[ ! -f "$ASSETDIR/.blend.done" ]]; then
+			rm -f "$ASSETDIR/bmw_cpu_mod.blend"
+			ensure_archive "$ASSETDIR/bmw_cpu_mod.blend" "Blender BMW model" \
+			  "https://gitlab.com/torvic9/mini-benchmarker/-/raw/master/bmw_cpu_mod.blend" \
+			  "$BLENDER_SHA" true
+			: > "$ASSETDIR/.blend.done"
+		fi
+		BLEND_SRC="$ASSETDIR/bmw_cpu_mod.blend"
+	fi
+	/usr/bin/time -f %e -o "$RESFILE" blender -b "$BLEND_SRC" \
 	  -o "$WORKDIR/blenderbmw.jpg" -f 1 --verbose 0 -t ${CPUCORES} &>/dev/null &
 	local PID=$!
 	echo -n -e "* ${TNAMES[8]}:\t\t\t"
@@ -411,12 +426,17 @@ exitproc() {
 		      "$ASSETDIR"/ffmpeg.tar.xz "$ASSETDIR"/namd.tar.gz "$ASSETDIR"/namd-example.tar.gz \
 		      "$ASSETDIR"/linux-$KERNVER.tar.xz "$ASSETDIR"/y-cruncher.tar.xz
 		rm -rf "$ASSETDIR/ffmpeg-$FFMPEGVER" "$ASSETDIR/.ffmpeg-${FFMPEGVER}.done" \
-		       "$ASSETDIR/namd" "$ASSETDIR/.namd-${NAMDVER}.done" \
+		       "$ASSETDIR/namd/NAMD_${NAMDVER}_Linux-x86_64-multicore" "$ASSETDIR/namd/apoa1" "$ASSETDIR/.namd-${NAMDVER}.done" \
 		       "$ASSETDIR/linux-$KERNVER" "$ASSETDIR/.linux-${KERNVER}.done" \
 		       "$ASSETDIR/y-cruncher v$YCRUNCHER_VER-static" "$ASSETDIR/.yc-${YCRUNCHER_VER}.done" \
 		       "$ASSETDIR/firefox102.tar" "$ASSETDIR/.firefox.done" \
 		       "$ASSETDIR/bosphorus_hd.y4m" "$ASSETDIR/.video.done" \
-		       "$ASSETDIR/bmw_cpu_mod.blend" "$ASSETDIR/.blend.done"
+		       "$ASSETDIR/.blend.done"
+		# The Blender model is a downloaded file only when the repository does
+		# not ship one; the vendored copy must survive a cleanup.
+		if [[ ! -f "$SCRIPT_ASSETS/bmw_cpu_mod.blend" ]]; then
+			rm -f "$ASSETDIR/bmw_cpu_mod.blend"
+		fi
 	fi
 	echo -e "${TB}Bye!${TN}\n"
 }
@@ -434,7 +454,9 @@ YCRUNCHER_VER="0.8.6.9545"
 # pipeline, and cached files are re-validated against the same pins on each run.
 NAMDVER="3.0b6"
 NAMD_URL="http://www.ks.uiuc.edu/Research/namd/3.0b6/download/120834/NAMD_3.0b6_Linux-x86_64-multicore.tar.gz"
-NAMDEX_URL="https://www.ks.uiuc.edu/Research/namd/utilities/apoa1.tar.gz"
+# The UIUC host serves a broken TLS chain, so the fallback uses plain HTTP;
+# the sha256 pin makes the transfer tamper-evident.
+NAMDEX_URL="http://www.ks.uiuc.edu/Research/namd/utilities/apoa1.tar.gz"
 # The NAMD download host serves a TLS chain standard clients cannot verify, so
 # these pins are the only integrity check the fetch gets; they match the
 # vendored archives in assets/namd/.
@@ -649,27 +671,37 @@ checkfiles() {
 	fi
 
 	if [[ ! -f "$ASSETDIR/.namd-${NAMDVER}.done" ]]; then
-		rm -rf "$ASSETDIR/namd"
-		ensure_archive "$ASSETDIR/namd.tar.gz" "NAMD" \
-		  "$NAMD_URL" "$NAMD_SHA" tar -tf
-		ensure_archive "$ASSETDIR/namd-example.tar.gz" "NAMD example" \
-		  "$NAMDEX_URL" "$NAMDEX_SHA" tar -tf
+		# The vendored archives live inside $ASSETDIR/namd when the workdir
+		# sits in the repository, so only the extracted trees are removed
+		# here, never the directory itself.
+		rm -rf "$ASSETDIR/namd/NAMD_${NAMDVER}_Linux-x86_64-multicore" "$ASSETDIR/namd/apoa1"
+		# Prefer the vendored archive when present: it is committed content
+		# pinned at use, so the download path is exercised only by installs
+		# that lack the repository assets.
+		local NAMD_SRC="$SCRIPT_ASSETS/namd/NAMD_${NAMDVER}_Linux-x86_64-multicore.tar.gz"
+		local NAMDEX_SRC="$SCRIPT_ASSETS/namd/apoa1.tar.gz"
+		if [[ -f "$NAMD_SRC" ]]; then
+			echo "$NAMD_SHA  $NAMD_SRC" | sha256sum -c - || \
+			  { echo "ERROR: Vendored NAMD archive failed its SHA-256 checksum"; exit 4; }
+		else
+			NAMD_SRC="$ASSETDIR/namd.tar.gz"
+			ensure_archive "$NAMD_SRC" "NAMD" "$NAMD_URL" "$NAMD_SHA" tar -tf
+		fi
+		if [[ -f "$NAMDEX_SRC" ]]; then
+			echo "$NAMDEX_SHA  $NAMDEX_SRC" | sha256sum -c - || \
+			  { echo "ERROR: Vendored NAMD example archive failed its SHA-256 checksum"; exit 4; }
+		else
+			NAMDEX_SRC="$ASSETDIR/namd-example.tar.gz"
+			ensure_archive "$NAMDEX_SRC" "NAMD example" "$NAMDEX_URL" "$NAMDEX_SHA" tar -tf
+		fi
 		echo "--> Preparing NAMD..."
 		cd "$ASSETDIR" || exit 4
 		mkdir -p namd
-		tar -C namd -xf namd.tar.gz || { echo "ERROR: tar -C namd -xf namd.tar.gz failed"; exit 4; }
-		tar -C namd -xf namd-example.tar.gz || { echo "ERROR: tar -C namd -xf namd-example.tar.gz failed"; exit 4; }
+		tar -C namd -xf "$NAMD_SRC" || { echo "ERROR: tar -C namd -xf $NAMD_SRC failed"; exit 4; }
+		tar -C namd -xf "$NAMDEX_SRC" || { echo "ERROR: tar -C namd -xf $NAMDEX_SRC failed"; exit 4; }
 		sed -i 's/\/usr//;s/500/400/' namd/apoa1/apoa1.namd || \
 		  { echo "ERROR: sed -i namd/apoa1/apoa1.namd failed"; exit 4; }
 		: > "$ASSETDIR/.namd-${NAMDVER}.done"
-	fi
-
-	if [[ ! -f "$ASSETDIR/.blend.done" ]]; then
-		rm -f "$ASSETDIR/bmw_cpu_mod.blend"
-		echo "--> Downloading Blender BMW model..."
-		wget -c --show-progress -qO "$ASSETDIR/bmw_cpu_mod.blend" \
-		  https://gitlab.com/torvic9/mini-benchmarker/-/raw/master/bmw_cpu_mod.blend
-		: > "$ASSETDIR/.blend.done"
 	fi
 
 	if [[ ! -f "$ASSETDIR/.firefox.done" ]]; then
