@@ -222,7 +222,7 @@ runblend() {
 	local BLEND_SRC
 	if [[ -f "$SCRIPT_ASSETS/bmw_cpu_mod.blend" ]]; then
 		BLEND_SRC="$SCRIPT_ASSETS/bmw_cpu_mod.blend"
-		echo "$BLENDER_SHA  $BLEND_SRC" | sha256sum -c - || \
+		echo "$BLENDER_SHA  $BLEND_SRC" | sha256sum -c - &>/dev/null || \
 		  { echo "ERROR: Vendored Blender model failed its SHA-256 checksum"; exit 4; }
 	else
 		if [[ ! -f "$ASSETDIR/.blend.done" ]]; then
@@ -697,14 +697,14 @@ checkfiles() {
 		local NAMD_SRC="$SCRIPT_ASSETS/namd/NAMD_${NAMDVER}_Linux-x86_64-multicore.tar.gz"
 		local NAMDEX_SRC="$SCRIPT_ASSETS/namd/apoa1.tar.gz"
 		if [[ -f "$NAMD_SRC" ]]; then
-			echo "$NAMD_SHA  $NAMD_SRC" | sha256sum -c - || \
+			echo "$NAMD_SHA  $NAMD_SRC" | sha256sum -c - &>/dev/null || \
 			  { echo "ERROR: Vendored NAMD archive failed its SHA-256 checksum"; exit 4; }
 		else
 			NAMD_SRC="$ASSETDIR/namd.tar.gz"
 			ensure_archive "$NAMD_SRC" "NAMD" "$NAMD_URL" "$NAMD_SHA" tar -tf
 		fi
 		if [[ -f "$NAMDEX_SRC" ]]; then
-			echo "$NAMDEX_SHA  $NAMDEX_SRC" | sha256sum -c - || \
+			echo "$NAMDEX_SHA  $NAMDEX_SRC" | sha256sum -c - &>/dev/null || \
 			  { echo "ERROR: Vendored NAMD example archive failed its SHA-256 checksum"; exit 4; }
 		else
 			NAMDEX_SRC="$ASSETDIR/namd-example.tar.gz"
