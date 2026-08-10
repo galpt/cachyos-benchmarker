@@ -41,6 +41,18 @@ CATEGORY_2 = [
 # Combined regex pattern for all parseable test names
 ALL_TEST_NAMES = CATEGORY_1 + [c[0] for c in CATEGORY_2]
 
+def kernel_sort_key(label):
+    """Kernel versions sort numerically: '7.0.10' comes after '7.0.5' under a
+    numeric key but before it lexicographically. The label suffix after the
+    first underscore is the scx scheduler and version, used only as a
+    deterministic tiebreak."""
+    kernel_part = label.split('_', 1)[0]
+    match = re.match(r'^(\d+)(?:\.(\d+))?(?:\.(\d+))?(?:-(\d+))?(?:-(.+))?$', kernel_part)
+    if not match:
+        return (0, 0, 0, 0, "", label)
+    major, minor, patch, pkgrel, rest = match.groups()
+    return (int(major), int(minor or 0), int(patch or 0), int(pkgrel or 0), rest or "", label)
+
 # Function to parse log files and extract test data, system information, and kernel versions
 def parse_log_files():
     test_data = defaultdict(list)
@@ -416,7 +428,7 @@ def plot_kernel_version_comparison(average_times, mode, kernel_versions, kernel_
 test_data, kernel_info, kernel_versions, kernel_metadata = parse_log_files()
 
 if test_data:
-    sorted_kernel_versions = sorted(kernel_versions.keys())
+    sorted_kernel_versions = sorted(kernel_versions.keys(), key=kernel_sort_key)
     kernel_versions_list = list(sorted_kernel_versions)
 
     # Calculate average test times for each kernel version
