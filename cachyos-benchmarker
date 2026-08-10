@@ -65,20 +65,70 @@ animate() {
 	echo -e "${TNAMES[$1]}: $(cat "$RESFILE")" >> "$LOGFILE"
 }
 
+# Download to a temporary name and only rename into place once the archive has
+# been validated. A failed transfer therefore leaves no file behind for a later
+# run to mistake for a valid cache entry, and a retry is always a clean retry.
+# This mirrors the kernel's atomic state transitions: never expose a
+# partially-constructed object under its final name.
 ensure_archive() {
 	local file="$1"
 	local description="$2"
 	local url="$3"
-	shift 3
+	local sha="$4"
+	shift 4
+	local part="${file}.part"
 
-	if [[ -f "$file" ]] && ! "$@" "$file" &>/dev/null; then
-		echo "--> Cached ${description} archive is invalid, re-downloading..."
-		rm -f "$file"
+	if [[ -f "$file" ]]; then
+		# A cached archive is accepted only when both the probe and the pinned
+		# hash pass; anything else is discarded and fetched again.
+		local cached_ok=true
+		"$@" "$file" &>/dev/null || cached_ok=false
+		if [[ -n "$sha" ]]; then
+			echo "$sha  $file" | sha256sum -c - &>/dev/null || cached_ok=false
+		fi
+		if [[ "$cached_ok" != "true" ]]; then
+			echo "--> Cached ${description} archive is invalid, re-downloading..."
+			rm -f "$file"
+		fi
 	fi
 
 	if [[ ! -f "$file" ]]; then
-		echo "--> Downloading ${description} archive..."
-		wget -c --show-progress -qO "$file" "$url"
+		local attempt=1
+		while (( attempt <= 2 )); do
+			echo "--> Downloading ${description} archive (attempt ${attempt}/2)..."
+			rm -f "$part"
+			wget -c --timeout=60 --tries=3 --show-progress -qO "$part" "$url"
+			local wget_rc=$?
+			if (( wget_rc != 0 )); then
+				echo "ERROR: Failed to download ${description} archive from ${url} (wget exit code ${wget_rc})"
+				rm -f "$part"
+				attempt=$((attempt + 1))
+				continue
+			fi
+			if [[ -n "$sha" ]] && ! echo "$sha  $part" | sha256sum -c - &>/dev/null; then
+				echo "ERROR: ${description} archive from ${url} failed its SHA-256 checksum"
+				rm -f "$part"
+				attempt=$((attempt + 1))
+				continue
+			fi
+			if ! "$@" "$part" &>/dev/null; then
+				echo "ERROR: ${description} archive from ${url} failed archive validation"
+				rm -f "$part"
+				attempt=$((attempt + 1))
+				continue
+			fi
+			mv -Tf "$part" "$file"
+			if (( $? != 0 )); then
+				echo "ERROR: Failed to move ${description} archive into place"
+				rm -f "$part"
+				exit 3
+			fi
+			break
+		done
+		if (( attempt > 2 )); then
+			echo "ERROR: Giving up on ${description} archive after repeated failures"
+			exit 3
+		fi
 	fi
 }
 
@@ -377,6 +427,28 @@ TMP="/tmp"
 VER="v2.2"
 FFMPEGVER="7.0.1"
 YCRUNCHER_VER="0.8.6.9545"
+# Asset versions and pinned checksums. The pins make every fetch fail closed:
+# a truncated or substituted archive stops preparation instead of entering the
+# pipeline, and cached files are re-validated against the same pins on each run.
+NAMDVER="3.0b6"
+NAMD_URL="http://www.ks.uiuc.edu/Research/namd/3.0b6/download/120834/NAMD_3.0b6_Linux-x86_64-multicore.tar.gz"
+NAMDEX_URL="https://www.ks.uiuc.edu/Research/namd/utilities/apoa1.tar.gz"
+# The NAMD download host serves a TLS chain standard clients cannot verify, so
+# these pins are the only integrity check the fetch gets; they match the
+# vendored archives in assets/namd/.
+NAMD_SHA="7bc27d236b5970bc8af2b0967e98e0ede5450ba2368b7771287e761e3b1b9f6b"
+NAMDEX_SHA="fe30322cc94d93dff6c4e517d28584c48d0d0a1a7b23e2cd74cdb36d03863b22"
+# Blender model hash of the committed assets/bmw_cpu_mod.blend.
+BLENDER_SHA="80701065d5a34cc8f41a9b7e8cdef821c816f769d2c8f62456e700d50bcb12dd"
+# Firefox source hash from the published mozilla SHA256SUMS file.
+FIREFOX_SHA="31b074623f09ca821a8a7dee0b3d2df1a45f1164264d31c26b4969a4d6a21dd1"
+# Kernel source hash from the kernel.org sha256sums.asc file.
+KERNEL_SHA="8112202bc26d086957a94d2109a6dcd4478c5ba18d0f0a5e1c5dfeea01f54972"
+# These assets have no published checksum; the pin is recorded from the first
+# trusted fetch and fails closed afterwards.
+FFMPEG_SHA="bce9eeb0f17ef8982390b1f37711a61b4290dc8c2a0c1a37b5857e85bfb0e4ff"
+YC_SHA="479eee4cfe390971a2dfe75c1f47b2c51d9ec2364a371232187ca1ea687b1549"
+VIDEO_SHA="e2f60b904789a60f6d1edc194d8540d401dd882e3ee3605b9b1de8feacc72133"
 KERNEL_NAME=$(uname -r)
 CDATE=$(date +%F-%H%M)
 RAMSIZE=$(awk '/MemTotal/{print int($2 / 1000)}' /proc/meminfo)
@@ -528,35 +600,35 @@ checkfiles() {
 	if [[ ! -f "$WORKDIR/bosphorus_hd.y4m" ]] ; then
 		ensure_archive "$WORKDIR/bosphorus_hd.7z" "video" \
 		  "http://ultravideo.cs.tut.fi/video/Bosphorus_1920x1080_120fps_420_8bit_YUV_Y4M.7z" \
-		  7z t
+		  "$VIDEO_SHA" 7z t
 		echo "--> Unzipping video..."
-		cd "$WORKDIR"
-		7z e bosphorus_hd.7z -o./ &>/dev/null
-		mv Bosphorus_1920x1080_120fps_420_8bit_YUV.y4m bosphorus_hd.y4m
+		cd "$WORKDIR" || exit 4
+		7z e bosphorus_hd.7z -o./ &>/dev/null || { echo "ERROR: 7z e bosphorus_hd.7z -o./ failed"; exit 4; }
+		mv Bosphorus_1920x1080_120fps_420_8bit_YUV.y4m bosphorus_hd.y4m || \
+		  { echo "ERROR: mv Bosphorus_1920x1080_120fps_420_8bit_YUV.y4m bosphorus_hd.y4m failed"; exit 4; }
 	fi
 
 	if [[ ! -d "$WORKDIR/ffmpeg-$FFMPEGVER" ]]; then
 		ensure_archive "$WORKDIR/ffmpeg.tar.xz" "ffmpeg" \
 		  "https://ffmpeg.org/releases/ffmpeg-$FFMPEGVER.tar.xz" \
-		  tar -tf
+		  "$FFMPEG_SHA" tar -tf
 		echo "--> Preparing ffmpeg..."
-		cd "$WORKDIR"
-		tar -xf ffmpeg.tar.xz
+		cd "$WORKDIR" || exit 4
+		tar -xf ffmpeg.tar.xz || { echo "ERROR: tar -xf ffmpeg.tar.xz failed"; exit 4; }
 	fi
 
 	if [[ ! -d "$WORKDIR/namd" ]]; then
 		ensure_archive "$WORKDIR/namd.tar.gz" "NAMD" \
-		  "http://www.ks.uiuc.edu/Research/namd/3.0b6/download/120834/NAMD_3.0b6_Linux-x86_64-multicore.tar.gz" \
-		  tar -tf
+		  "$NAMD_URL" "$NAMD_SHA" tar -tf
 		ensure_archive "$WORKDIR/namd-example.tar.gz" "NAMD example" \
-		  "https://www.ks.uiuc.edu/Research/namd/utilities/apoa1.tar.gz" \
-		  tar -tf
+		  "$NAMDEX_URL" "$NAMDEX_SHA" tar -tf
 		echo "--> Preparing NAMD..."
-		cd "$WORKDIR"
+		cd "$WORKDIR" || exit 4
 		mkdir namd
-		tar -C namd -xf namd.tar.gz
-		tar -C namd -xf namd-example.tar.gz
-		sed -i 's/\/usr//;s/500/400/' namd/apoa1/apoa1.namd
+		tar -C namd -xf namd.tar.gz || { echo "ERROR: tar -C namd -xf namd.tar.gz failed"; exit 4; }
+		tar -C namd -xf namd-example.tar.gz || { echo "ERROR: tar -C namd -xf namd-example.tar.gz failed"; exit 4; }
+		sed -i 's/\/usr//;s/500/400/' namd/apoa1/apoa1.namd || \
+		  { echo "ERROR: sed -i namd/apoa1/apoa1.namd failed"; exit 4; }
 	fi
 
 	if [[ ! -f "$WORKDIR/bmw_cpu_mod.blend" ]]; then
@@ -568,41 +640,57 @@ checkfiles() {
 	if [[ ! -f "$WORKDIR/firefox102.tar" ]]; then
 		ensure_archive "$WORKDIR/firefox102.tar.xz" "Firefox" \
 		  "http://ftp.mozilla.org/pub/firefox/releases/102.9.0esr/source/firefox-102.9.0esr.source.tar.xz" \
-		  xz -t
+		  "$FIREFOX_SHA" xz -t
 		echo "--> Unzipping Firefox tarball..."
-		xz -d -k -q -f "$WORKDIR/firefox102.tar.xz"
+		xz -d -k -q -f "$WORKDIR/firefox102.tar.xz" || \
+		  { echo "ERROR: xz -d -k -q -f $WORKDIR/firefox102.tar.xz failed"; exit 4; }
 	fi
 
 	if [[ ! -d "$WORKDIR/linux-$KERNVER" ]]; then
 		ensure_archive "$WORKDIR/linux-$KERNVER.tar.xz" "Linux kernel" \
 		  "https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-$KERNVER.tar.xz" \
-		  tar -tf
+		  "$KERNEL_SHA" tar -tf
 		echo "--> Uncompressing kernel source..."
-		cd "$WORKDIR"
-		tar -xf linux-$KERNVER.tar.xz
+		cd "$WORKDIR" || exit 4
+		tar -xf linux-$KERNVER.tar.xz || { echo "ERROR: tar -xf linux-$KERNVER.tar.xz failed"; exit 4; }
 	fi
 
 	if [[ ! -d "$WORKDIR/y-cruncher v$YCRUNCHER_VER-static" ]]; then
 		ensure_archive "$WORKDIR/y-cruncher.tar.xz" "y-cruncher" \
 		  "https://github.com/Mysticial/y-cruncher/releases/download/v$YCRUNCHER_VER/y-cruncher.v$YCRUNCHER_VER-static.tar.xz" \
-		  tar -tf
+		  "$YC_SHA" tar -tf
 		echo "--> Uncompressing y-cruncher..."
-		cd "$WORKDIR"
-		tar -xf y-cruncher.tar.xz
+		cd "$WORKDIR" || exit 4
+		tar -xf y-cruncher.tar.xz || { echo "ERROR: tar -xf y-cruncher.tar.xz failed"; exit 4; }
 	fi
 
 	echo -e "\n${TB}Preparing kernel source...${TN}"
 	cd "$WORKDIR/linux-$KERNVER" || exit 4
-	make -s distclean && make -s defconfig
+	make -s distclean && make -s defconfig || \
+	  { echo "ERROR: make -s distclean && make -s defconfig failed"; exit 4; }
 
 	echo -e "\n${TB}Preparing ffmpeg source...${TN}"
 	cd "$WORKDIR/ffmpeg-$FFMPEGVER" || exit 4
-	make -s distclean &>/dev/null
-	./configure --prefix=$TMP --disable-debug --enable-static \
+	# ffbuild/config.mak only exists after configure has run, so on a fresh
+	# tree make distclean fails before the first configure; a failing clean
+	# is only a real error once the tree holds generated files.
+	if ! make -s distclean &>/dev/null && [[ -f ffbuild/config.mak ]]; then
+		echo "ERROR: make -s distclean failed"
+		exit 4
+	fi
+	if ! ./configure --prefix=$TMP --disable-debug --enable-static \
 	    --enable-gpl --enable-version3 --disable-ffplay --disable-ffprobe \
 	    --disable-programs --disable-doc --disable-network --disable-protocols \
 	    --disable-filters --disable-iconv --enable-libdrm --disable-stripping \
-	    --disable-autodetect --cpu=native &>/dev/null
+	    --disable-autodetect --cpu=native &>/dev/null; then
+		echo "ERROR: ./configure failed; re-running without output suppression:"
+		./configure --prefix=$TMP --disable-debug --enable-static \
+		    --enable-gpl --enable-version3 --disable-ffplay --disable-ffprobe \
+		    --disable-programs --disable-doc --disable-network --disable-protocols \
+		    --disable-filters --disable-iconv --enable-libdrm --disable-stripping \
+		    --disable-autodetect --cpu=native
+		exit 4
+	fi
 }
 
 checksys() {
