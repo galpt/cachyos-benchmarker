@@ -377,7 +377,7 @@ intro() {
     echo -e "    ${B_YELLOW}• perf mem${REGULAR}                : Raw RAM throughput speed using libc memcpy"
     echo -e "    ${B_YELLOW}• primesieve${REGULAR}              : Multithreaded search for primes up to 6.66*10^11"
     echo -e "    ${B_YELLOW}• NAMD${REGULAR}                    : Multithreaded molecular dynamics simulation"
-    echo -e "    ${B_YELLOW}• argon2${REGULAR}                  : Hashing algorithm (16 iterations, 2GB memory)"
+    echo -e "    ${B_YELLOW}• argon2${REGULAR}                  : Hashing algorithm (20 iterations, 2 GiB memory)"
     echo -e "    ${B_YELLOW}• compilation${REGULAR}             : Compiles FFmpeg and the Linux kernel"
     echo -e "    ${B_YELLOW}• xz compression${REGULAR}          : Compresses Firefox source tarball using xz"
     echo -e "    ${B_YELLOW}• x265 encoding${REGULAR}           : Encodes a short 1080p video clip"
@@ -392,20 +392,24 @@ intro() {
 
     echo -e "  ${B_CYAN}${BOLD}Resilience & Caching Features:${REGULAR}"
     echo -e "    ${B_GREEN}• Asset Caching${REGULAR}       : Downloaded archives (.tar.xz, .7z) and extracted source directories"
-    echo -e "                            are cached in <workdir> by default to accelerate repeated runs."
-    echo -e "    ${B_GREEN}• Resumable Downloads${REGULAR} : Interrupted downloads automatically resume via 'wget -c'."
-    echo -e "    ${B_GREEN}• Integrity Checks${REGULAR}    : Archive files are verified (tar -tf, xz -t, 7z t) before run."
-    echo -e "                            Corrupted archives are automatically detected and re-downloaded."
-    echo -e "    ${B_GREEN}• Scheduler Monitor${REGULAR}   : Actively monitors the active sched_ext scheduler. If it crashes or"
-    echo -e "                            exits mid-run, the benchmarker terminates safely (exits with code 9).\n"
+    echo -e "                            are cached in the assets/ directory next to <workdir>; sibling workdirs share the cache."
+    echo -e "    ${B_GREEN}• Resumable Downloads${REGULAR} : Downloads land in a temporary .part file and are renamed into place"
+    echo -e "                            only after validation; an interrupted transfer leaves no file behind."
+    echo -e "    ${B_GREEN}• Integrity Checks${REGULAR}    : Fresh downloads and cached files are probed (tar -tf, xz -t, 7z t)"
+    echo -e "                            and checksum-verified. Invalid archives are discarded and re-downloaded once;"
+    echo -e "                            a second failure stops preparation (exit code 3)."
+    echo -e "    ${B_GREEN}• Scheduler Monitor${REGULAR}   : Monitors the active sched_ext scheduler while a benchmark is running."
+    echo -e "                            If it crashes or exits mid-run, the benchmarker terminates safely (exit code 9).\n"
 
     echo -e "  ${B_CYAN}${BOLD}Exit Codes:${REGULAR}"
-    echo -e "    ${B_YELLOW}• 0${REGULAR} : All benchmarks completed successfully"
-    echo -e "    ${B_YELLOW}• 1${REGULAR} : Command-line syntax / argument error"
-    echo -e "    ${B_YELLOW}• 2${REGULAR} : Interrupted by user (SIGINT) or insufficient RAM (< 4GB)"
-    echo -e "    ${B_YELLOW}• 4${REGULAR} : Failed to create/access directories or prepare sources"
-    echo -e "    ${B_YELLOW}• 8${REGULAR} : General run or compilation failure"
-    echo -e "    ${B_YELLOW}• 9${REGULAR} : Critical: Sched-Ext scheduler crashed or exited mid-run\n"
+    echo -e "    ${B_YELLOW}• 0${REGULAR}  : Complete run with a valid score"
+    echo -e "    ${B_YELLOW}• 1${REGULAR}  : Command-line syntax / argument error"
+    echo -e "    ${B_YELLOW}• 2${REGULAR}  : Interrupted by user (SIGINT) or insufficient RAM (< 3500 MB)"
+    echo -e "    ${B_YELLOW}• 3${REGULAR}  : Download failure (archive could not be fetched or validated)"
+    echo -e "    ${B_YELLOW}• 4${REGULAR}  : Failed to prepare sources or create the run log"
+    echo -e "    ${B_YELLOW}• 8${REGULAR}  : A benchmark failed"
+    echo -e "    ${B_YELLOW}• 9${REGULAR}  : Sched-Ext scheduler crashed or exited mid-run"
+    echo -e "    ${B_YELLOW}• 10${REGULAR} : No benchmark produced a valid result, no score computed\n"
 
     echo -e "  ${B_CYAN}${BOLD}Notes:${REGULAR}"
     echo -e "    - Results are logged to individual files: ${BOLD}benchie_<name>_<date>.log${REGULAR} in <workdir>"
@@ -561,7 +565,7 @@ if [[ -z "$WORKDIR" ]]; then
 fi
 
 # check system memory
-[[ $RAMSIZE -lt 3500 ]] && echo "Your computer must have at least 4 GB of RAM! Aborting." && exit 2
+[[ $RAMSIZE -lt 3500 ]] && echo "Your computer must have at least 3500 MB of RAM! Aborting." && exit 2
 
 [[ "${WORKDIR:0:1}" != "/" ]] && WORKDIR="$PWD/$WORKDIR"
 if [[ ! -d "$WORKDIR" ]] ; then

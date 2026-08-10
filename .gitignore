@@ -3,33 +3,25 @@ __pycache__/
 *.pyc
 *.pyo
 
-# Temporary benchmark run files
-run*
+# Benchmark run workdir and partial downloads
+benchmark-workdir/
+*.part
 
-# Benchmark assets (downloaded)
-bosphorus_hd.7z
-bosphorus_hd.y4m
-firefox102.tar
-firefox102.tar.xz
-ffmpeg.tar.xz
-ffmpeg-*/
-namd.tar.gz
-namd-example.tar.gz
-namd/
-linux-*.tar.xz
-linux-*/
-y-cruncher.tar.xz
-y-cruncher v*/
-
-# Result files
-benchie_*.log
-test_performance.html
-test_results_*.csv
-test_results_*.json
-*.png
-
-# Geekbench logs
-geekbench_*.log
-
-# Lock files
-benchie.XXXX
+# Downloaded and extracted content in the repository's assets/ cache.
+# The vendored files (assets/bmw_cpu_mod.blend, assets/namd/*.tar.gz) stay
+# tracked; these patterns match only downloaded or extracted names.
+assets/bosphorus_hd.7z
+assets/bosphorus_hd.y4m
+assets/firefox102.tar
+assets/firefox102.tar.xz
+assets/ffmpeg.tar.xz
+assets/ffmpeg-*/
+assets/namd.tar.gz
+assets/namd-example.tar.gz
+assets/namd/NAMD_*/
+assets/namd/apoa1/
+assets/linux-*.tar.xz
+assets/linux-*/
+assets/y-cruncher.tar.xz
+assets/y-cruncher v*/
+assets/.*.done
