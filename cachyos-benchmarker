@@ -243,8 +243,12 @@ runblend() {
 
 runxz() {
 	local RESFILE="$WORKDIR/runxz"
-	/usr/bin/time -f %e -o "$RESFILE" xz -z -k -T${CPUCORES} -Qqq \
-	  -f "$ASSETDIR/firefox102.tar" &
+	# Compress to stdout: the cached firefox102.tar.xz is a pinned
+	# download, and writing the benchmark output to its default name
+	# would replace it with the re-compressed archive, forcing a
+	# re-download on the next run.
+	/usr/bin/time -f %e -o "$RESFILE" xz -z -T${CPUCORES} -Qqq -c \
+	  "$ASSETDIR/firefox102.tar" > "$WORKDIR/firefox102-bench.xz" &
 	local PID=$!
 	echo -n -e "* ${TNAMES[9]}:\t\t\t"
 	animate 9 && return 0 || return 99
@@ -431,7 +435,8 @@ killproc() {
 exitproc() {
 	echo -e "\n-> Removing temporary files..."
 	rm -f "$WORKDIR"/run* "$WORKDIR"/stressC "$WORKDIR"/schbench_raw \
-	      "$WORKDIR"/*.txt "$WORKDIR"/*.jpg "$WORKDIR"/*.ppm
+	      "$WORKDIR"/*.txt "$WORKDIR"/*.jpg "$WORKDIR"/*.ppm \
+	      "$WORKDIR"/firefox102-bench.xz
 	rm -f "$ASSETDIR"/*.part
 	rm -f "$LOCKFILE"
 
