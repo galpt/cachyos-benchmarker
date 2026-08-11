@@ -104,7 +104,7 @@ def parse_log_files():
             # line is captured; the Total time/score lines are not test
             # metrics and are deliberately not in the alternation.
             escaped_names = [re.escape(n) for n in ALL_TEST_NAMES]
-            pattern = r'(' + '|'.join(escaped_names) + r'): (\d+\.?\d*)$'
+            pattern = r'^(' + '|'.join(escaped_names) + r'): (\d+\.?\d*)$'
             for match in re.finditer(pattern, data_text, re.MULTILINE):
                 test_name = match.group(1)
                 test_time = float(match.group(2))
@@ -117,7 +117,7 @@ def parse_log_files():
             # aggregation. The reason in parentheses is not interpreted, so
             # any wording the script writes (exit code, scheduler crash) is
             # accepted.
-            failed_pattern = r'(' + '|'.join(escaped_names) + r'): FAILED(?: \([^)]*\))?$'
+            failed_pattern = r'^(' + '|'.join(escaped_names) + r'): FAILED(?: \([^)]*\))?$'
             for match in re.finditer(failed_pattern, data_text, re.MULTILINE):
                 kernel_metadata[kernel_label].setdefault("failed_tests", []).append(match.group(1))
 
