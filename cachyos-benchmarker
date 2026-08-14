@@ -885,17 +885,20 @@ set_governor() {
 }
 restore_governor() {
 	[[ -n "$GOV_SAVED" ]] && set_governor "$GOV_SAVED"
-	trap - EXIT
 }
 save_governor
 set_governor performance
-trap restore_governor EXIT
+# An abort inside the latency block must restore the governor and still
+# run the end-of-run cleanup, so both handlers are chained here. After
+# the block the normal exitproc trap is restored.
+trap 'restore_governor; exitproc' EXIT
 sleep 5
 run_or_exit runschbench
 runrps
 sleep 1
 run_or_exit runcyclictest
 restore_governor
+trap exitproc EXIT
 run_or_exit runstress
 run_or_exit runyc
 run_or_exit runperf_sch
