@@ -289,15 +289,26 @@ runrps() {
 	if [[ -f "$WORKDIR/schbench_raw" ]]; then
 		grep -oP 'average rps: \K[\d.]+' "$WORKDIR/schbench_raw" | \
 		  awk '{printf "%.2f\n", $1}' > "$RESFILE"
+		# The first 50.0th line is the wakeup-latency percentile, the
+		# stable companion of the p99 that feeds the scoring.
+		grep -oP '50\.0th:\s*\K\d+' "$WORKDIR/schbench_raw" | head -1 | \
+		  awk '{printf "%.2f\n", $1}' > "$WORKDIR/runp50"
 	fi
-	echo -n -e "* schbench avg rps:\t\t"
+	echo -n -e "* schbench avg rps:\t\t\t"
 	cat "$RESFILE" 2>/dev/null || echo "N/A"
+	echo -n -e "* schbench p50 latency (us):\t\t"
+	cat "$WORKDIR/runp50" 2>/dev/null || echo "N/A"
 	return 0
 }
 
 runcyclictest() {
 	local RESFILE="$WORKDIR/runcyclictest"
-	cyclictest -D 30 -t -i 1000 -d 0 -q -m --policy=other 2>/dev/null | \
+	# The measurement threads run one per CPU, pinned, at FIFO priority
+	# 99, so the scheduler under test can never delay the measurer
+	# itself. The monotonic clock is explicit. The machine must be
+	# quiet, which the run order guarantees.
+	cyclictest -D 30 -t -a 0-$(( $(nproc) - 1 )) -i 1000 -d 0 -q -m \
+	  -c 0 --policy=fifo -p 99 2>/dev/null | \
 	  grep '^T:' | sed 's/.*Max:[[:space:]]*//' | sort -n | tail -1 | \
 	  awk '{printf "%.2f\n", $1}' > "$RESFILE" &
 	local PID=$!
@@ -856,6 +867,35 @@ checkfiles || exit $?
 # echoes, so a failure there is mapped to 8.
 checksys || exit $?
 header || exit 8
+# The latency tests run first, on a quiet machine, before any throughput
+# test heats the system: the latency tail under load reflects contention,
+# not the scheduler. The performance governor keeps frequency ramps off the
+# wakeup path and is restored afterwards, so the throughput tests keep the
+# user's governor.
+save_governor() {
+	GOV_SAVED=$(cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor \
+		    2>/dev/null || true)
+}
+set_governor() {
+	local gov="$1"
+	local f
+	for f in /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor; do
+		[[ -w "$f" ]] && echo "$gov" > "$f" 2>/dev/null || true
+	done
+}
+restore_governor() {
+	[[ -n "$GOV_SAVED" ]] && set_governor "$GOV_SAVED"
+	trap - EXIT
+}
+save_governor
+set_governor performance
+trap restore_governor EXIT
+sleep 5
+run_or_exit runschbench
+runrps
+sleep 1
+run_or_exit runcyclictest
+restore_governor
 run_or_exit runstress
 run_or_exit runyc
 run_or_exit runperf_sch
@@ -868,10 +908,6 @@ run_or_exit runxz
 run_or_exit runkern
 run_or_exit runblend
 run_or_exit runx265
-run_or_exit runschbench
-runrps
-sleep 1
-run_or_exit runcyclictest
 
 # time and score calculations, print and log final results
 # Only numeric results may enter the scoring arithmetic. A result line that
@@ -966,6 +1002,9 @@ fi
 # Absent metrics are omitted, not zeroed: publishing 0 would read as a real measurement.
 if [[ -s "$WORKDIR/runrps" ]]; then
 	echo -e "schbench avg rps: $(cat "$WORKDIR/runrps")" >> "$LOGFILE"
+fi
+if [[ -s "$WORKDIR/runp50" ]]; then
+	echo -e "schbench p50 latency (us): $(cat "$WORKDIR/runp50")" >> "$LOGFILE"
 fi
 echo -e "\nName: ${NCHOICE}" >> "$LOGFILE"
 echo -e "Date: ${CDATE}" >> "$LOGFILE"

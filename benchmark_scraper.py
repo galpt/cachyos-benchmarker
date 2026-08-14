@@ -35,6 +35,7 @@ CATEGORY_1 = [
 # Each entry: (test_name, direction, unit_label)
 CATEGORY_2 = [
     ("schbench p99 latency (us)", "lower", "us"),
+    ("schbench p50 latency (us)", "lower", "us"),
     ("schbench avg rps",         "higher", "rps"),
     ("cyclictest max latency (us)", "lower", "us"),
 ]

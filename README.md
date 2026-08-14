@@ -17,6 +17,7 @@ Benchmarks are grouped into two categories in the generated charts:
 
 **Category 2 — Scheduler Latency** (per-metric direction):
 * schbench wakeup latency (us) — ↓ lower is better
+* schbench p50 wakeup latency (us) — ↓ lower is better
 * schbench throughput (rps) — ↑ higher is better
 * cyclictest scheduling latency (us) — ↓ lower is better
 
