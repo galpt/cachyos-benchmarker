@@ -850,6 +850,10 @@ checksys() {
 	set -o noclobber
 	: > "$LOGFILE" || { echo "ERROR: cannot create $LOGFILE"; set +o noclobber; exit 4; }
 	set +o noclobber
+	echo "Kernel: $(uname -r)" >> "$LOGFILE"
+	echo "SCX Scheduler: $SCX" >> "$LOGFILE"
+	echo "SCX Version: $SCX_VERSION" >> "$LOGFILE"
+	printf "System: %s\n" "$SYSINFO" >> "$LOGFILE"
 
 	# traps (ctrl-c)
 	trap killproc INT

@@ -91,15 +91,12 @@ def parse_log_files():
                     "scx_version": scx_version,
                 }
 
-            # A run aborted before its metadata was written (for example a
-            # scheduler crash) has no System: line and is dropped here with a
-            # visible warning; nothing can be aggregated from it.
             system_info_match = re.search(r'System:(.*?)$', data_text, re.DOTALL)
             if system_info_match:
                 system_info = system_info_match.group(1).strip()
             else:
-                print(f"Warning: Could not extract system information from file: {file}")
-                continue
+                system_info = ""
+                print(f"Warning: Could not extract system information from file: {file}, continuing without it")
 
             # Build regex alternation from all test names. The value is
             # anchored so that only a numeric result standing alone on its
