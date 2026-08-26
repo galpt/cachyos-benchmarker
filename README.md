@@ -1,25 +1,10 @@
-#### This is a small script for Arch-compatible distros that runs simple benchmarks and stress tests.
+#### This is a small script for Arch compatible distributions that runs simple benchmarks and stress tests.
 
-Benchmarks are grouped into two categories in the generated charts:
+Benchmarks are grouped into two categories in the generated charts.
 
-**Category 1 — Throughput & Compilation** (all ↓ lower is better):
-* perf sched & mem
-* stress-ng cpu & mem
-* xz compression
-* ffmpeg compilation
-* y-cruncher pi calculation
-* argon2 hashing
-* blender rendering
-* primesieve
-* kernel defconfig
-* namd
-* x265 encoding
+Category 1 is Throughput and Compilation. Lower is better for every test in this group. It includes perf sched and mem, stress-ng cpu and mem, xz compression, ffmpeg compilation, y-cruncher pi calculation, argon2 hashing, blender rendering, primesieve, kernel defconfig, namd and x265 encoding.
 
-**Category 2 — Scheduler Latency** (per-metric direction):
-* schbench wakeup latency (us) — ↓ lower is better
-* schbench p50 wakeup latency (us) — ↓ lower is better
-* schbench throughput (rps) — ↑ higher is better
-* cyclictest scheduling latency (us) — ↓ lower is better
+Category 2 is Scheduler Latency. Each metric has its own direction. schbench wakeup latency and schbench p50 wakeup latency are lower is better. schbench throughput is higher is better. cyclictest scheduling latency is lower is better. schbench measures wakeup latency through the scheduler under test, while cyclictest at FIFO 99 measures the realtime envelope. Both run first on a quiet machine under the performance governor.
 
 ## Quick Start
 
