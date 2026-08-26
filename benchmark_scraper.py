@@ -84,11 +84,12 @@ def parse_log_files():
                 scx_version = scx_version_match.group(1)
                 kernel_label = ''.join([kernel_version, '_', scx, '_', scx_version])
 
-            kernel_metadata[kernel_label] = {
-                "kernel": kernel_version,
-                "scx_scheduler": scx,
-                "scx_version": scx_version,
-            }
+            if kernel_label not in kernel_metadata:
+                kernel_metadata[kernel_label] = {
+                    "kernel": kernel_version,
+                    "scx_scheduler": scx,
+                    "scx_version": scx_version,
+                }
 
             # A run aborted before its metadata was written (for example a
             # scheduler crash) has no System: line and is dropped here with a
@@ -337,13 +338,24 @@ def export_data(average_times, kernel_versions, csv_filename, json_filename, ker
     if not kernel_versions:
         return
 
-    test_names = list(average_times[0].keys())
-    # A benchmark that failed on every kernel has no averaged value; its column
-    # still appears so the failure is visible in the export.
-    for i, kernel_version in enumerate(kernel_versions):
-        for name in kernel_metadata.get(kernel_version, {}).get("failed_tests", []):
-            if name not in test_names:
-                test_names.append(name)
+    # Union of all test names across kernels, preserving Category order
+    # so a metric present only on a later kernel is not omitted.
+    all_keys = set()
+    for avg in average_times:
+        all_keys.update(avg.keys())
+    for kv in kernel_versions:
+        for name in kernel_metadata.get(kv, {}).get("failed_tests", []):
+            all_keys.add(name)
+    test_names = []
+    for t in CATEGORY_1:
+        if t in all_keys:
+            test_names.append(t)
+            all_keys.remove(t)
+    for t, _, _ in CATEGORY_2:
+        if t in all_keys:
+            test_names.append(t)
+            all_keys.remove(t)
+    test_names.extend(sorted(all_keys))
 
     with open(csv_filename, 'w', newline='') as f:
         writer = csv.writer(f)
@@ -368,7 +380,24 @@ def export_data(average_times, kernel_versions, csv_filename, json_filename, ker
 
 # Function to plot performance comparison between different kernel versions (keep existing)
 def plot_kernel_version_comparison(average_times, mode, kernel_versions, kernel_metadata=None):
-    all_test_names = list(average_times[0].keys())
+    # Union of all test names, so a metric only on a later kernel is not omitted
+    all_keys = set()
+    for avg in average_times:
+        all_keys.update(avg.keys())
+    for kv in kernel_versions:
+        for name in kernel_metadata.get(kv, {}).get("failed_tests", []):
+            all_keys.add(name)
+    ordered = []
+    for t in CATEGORY_1:
+        if t in all_keys:
+            ordered.append(t)
+            all_keys.remove(t)
+    for t, _, _ in CATEGORY_2:
+        if t in all_keys:
+            ordered.append(t)
+            all_keys.remove(t)
+    ordered.extend(sorted(all_keys))
+    all_test_names = ordered
     num_tests = len(all_test_names)
 
     # Find y-cruncher index in test names and detect skip
@@ -394,7 +423,7 @@ def plot_kernel_version_comparison(average_times, mode, kernel_versions, kernel_
     for i, avg_times in enumerate(average_times):
         kernel_version = kernel_versions[i]
         kv_skipped_yc = kernel_metadata.get(kernel_version, {}).get("yc_skipped", False) if kernel_metadata else False
-        values = list(avg_times.values())[::-1]
+        values = [avg_times.get(name, 0) for name in all_test_names][::-1]
         color = colors[i % len(colors)]
         bars = ax.barh(np.arange(num_tests) + i * bar_height, values, height=bar_height,
                        label=kernel_version, color=color)

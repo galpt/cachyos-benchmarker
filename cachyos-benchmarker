@@ -276,14 +276,18 @@ runyc() {
 
 runschbench() {
 	local RESFILE="$WORKDIR/runschbench"
+	local OLD_PIPEFAIL=0
+	[[ "$-" == *p* ]] || OLD_PIPEFAIL=1
 	set -o pipefail
 	schbench -m 2 -r 30 2>&1 | tee "$WORKDIR/schbench_raw" | \
 	  grep -oP '99\.0th:\s*\K\d+' | head -1 | \
 	  awk '{printf "%.2f\n", $1}' > "$RESFILE" &
 	local PID=$!
 	echo -n -e "* ${TNAMES[12]}:\t\t"
-	animate 12 && return 0 || return 99
-	set +o pipefail
+	local RC=0
+	animate 12 || RC=99
+	[[ $OLD_PIPEFAIL -eq 1 ]] && set +o pipefail
+	return $RC
 }
 
 runrps() {
@@ -309,6 +313,8 @@ runcyclictest() {
 	# 99, so the scheduler under test can never delay the measurer
 	# itself. The monotonic clock is explicit. The machine must be
 	# quiet, which the run order guarantees.
+	local OLD_PIPEFAIL=0
+	[[ "$-" == *p* ]] || OLD_PIPEFAIL=1
 	set -o pipefail
 	cyclictest -D 30 -t -a 0-$(( $(nproc) - 1 )) -i 1000 -d 0 -q -m \
 	  -c 0 --policy=fifo -p 99 2>/dev/null | \
@@ -316,8 +322,10 @@ runcyclictest() {
 	  awk '{printf "%.2f\n", $1}' > "$RESFILE" &
 	local PID=$!
 	echo -n -e "* ${TNAMES[13]}:\t\t"
-	animate 13 && return 0 || return 99
-	set +o pipefail
+	local RC=0
+	animate 13 || RC=99
+	[[ $OLD_PIPEFAIL -eq 1 ]] && set +o pipefail
+	return $RC
 }
 
 rungeekbench() {
@@ -607,6 +615,18 @@ SCRIPT_ASSETS="$SCRIPTDIR/assets"
 checkfiles() {
 	echo -e "\n${TB}Checking, downloading and preparing test files...${TN}"
 	mkdir -p "$ASSETDIR"
+	if [[ -L "$ASSETDIR" ]]; then
+		echo "ERROR: $ASSETDIR is a symlink, refusing to use it"
+		exit 4
+	fi
+	if [[ -d "$ASSETDIR" ]]; then
+		local ASSET_OWNER
+		ASSET_OWNER=$(stat -c %U "$ASSETDIR" 2>/dev/null || true)
+		if [[ -n "$ASSET_OWNER" && "$ASSET_OWNER" != "$(id -un)" ]]; then
+			echo "ERROR: $ASSETDIR is owned by $ASSET_OWNER, expected $(id -un)"
+			exit 4
+		fi
+	fi
 
 	# Markers are the preparation contract: a marker without its output means
 	# the tree was removed by hand, and failing at run time wastes the whole
@@ -621,6 +641,10 @@ checkfiles() {
 			exit 4
 		fi
 	done
+	if [[ -f "$ASSETDIR/.namd-${NAMDVER}.done" && ( ! -d "$ASSETDIR/namd/NAMD_${NAMDVER}_Linux-x86_64-multicore" || ! -d "$ASSETDIR/namd/apoa1" ) ]]; then
+		echo "ERROR: $ASSETDIR/.namd-${NAMDVER}.done exists but one of the NAMD trees is missing; remove the marker or restore the assets"
+		exit 4
+	fi
 
 	# stress-ng jobfile
 	cat > "$WORKDIR/stressC" <<- EOF
@@ -877,8 +901,13 @@ header || exit 8
 # wakeup path and is restored afterwards, so the throughput tests keep the
 # user's governor.
 save_governor() {
-	GOV_SAVED=$(cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor \
-		    2>/dev/null || true)
+	GOV_SAVED_PATHS=()
+	GOV_SAVED_VALS=()
+	local f
+	for f in /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor; do
+		GOV_SAVED_PATHS+=("$f")
+		GOV_SAVED_VALS+=("$(cat "$f" 2>/dev/null || true)")
+	done
 }
 set_governor() {
 	local gov="$1"
@@ -888,7 +917,10 @@ set_governor() {
 	done
 }
 restore_governor() {
-	[[ -n "$GOV_SAVED" ]] && set_governor "$GOV_SAVED"
+	local i
+	for i in "${!GOV_SAVED_PATHS[@]}"; do
+		[[ -n "${GOV_SAVED_VALS[i]}" ]] && echo "${GOV_SAVED_VALS[i]}" > "${GOV_SAVED_PATHS[i]}" 2>/dev/null || true
+	done
 }
 save_governor
 set_governor performance
@@ -936,6 +968,7 @@ for ((i=0; i<${NRTESTS}; i++)) ; do
 	else
 		FAILED_TESTS=$((FAILED_TESTS + 1))
 		FAILED_NAMES+=("${TNAMES[$i]}")
+		echo "${TNAMES[$i]}: FAILED (invalid result)" >> "$LOGFILE"
 	fi
 done
 
